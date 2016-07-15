@@ -20,9 +20,14 @@ class Configuration implements ConfigurationInterface
         $treeBuilder = new TreeBuilder();
         $rootNode = $treeBuilder->root('tdm_swift_mailer_event');
 
-        // Here you should define the parameters that are allowed to
-        // configure your bundle. See the documentation linked above for
-        // more information on that topic.
+        $rootNode
+            ->addDefaultsIfNotSet()
+            ->children()
+                ->scalarNode('message')
+                    ->defaultValue('TDM\SwiftMailerEventBundle\Model\Message')
+                ->end()
+            ->end()
+        ;
 
         return $treeBuilder;
     }

@@ -15,12 +15,12 @@ class AddEventDispatcherCompilerPass implements CompilerPassInterface {
 
     public function process(ContainerBuilder $container) {
         //add the event dispatcher onto the classes
-        $def = $container->getDefinition('swiftmailer.mailer');
+        $def = $container->getDefinition('swiftmailer.mailer.default');
         $def->addMethodCall('setEventDispatcher', array(new Reference('event_dispatcher')));
         unset($def);
 
-        if ($container->hasDefinition('swiftmailer.transport.smtp')) {
-            $def = $container->getDefinition('swiftmailer.transport.smtp');
+        if ($container->hasDefinition('swiftmailer.transport.smtp.abstract')) {
+            $def = $container->getDefinition('swiftmailer.transport.smtp.abstract');
             $def->addMethodCall('setEventDispatcher', array(new Reference('event_dispatcher')));
             unset($def);
         }

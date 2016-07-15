@@ -21,7 +21,7 @@ class TDMSwiftMailerEventBundle extends Bundle {
         //make sure to change the default message definition 
         Swift_DependencyContainer::getInstance()
                 ->register('message.message')
-                ->asNewInstanceOf('TDM\SwiftMailerEventBundle\Model\Message');
+                ->asNewInstanceOf($this->container->getParameter('tdm_swift_mailer_event.message'));
         parent::boot();
     }
 

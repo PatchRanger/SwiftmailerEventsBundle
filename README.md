@@ -16,7 +16,18 @@ The best way to install the bundle is via Composer.
 "tdm/swiftmailer-events-bundle": "0.1.*@dev"
 ```
 
-to the section, along with other packages you require.  Now run ```composer.phar install``` if this is a new installation, or ```composer.phar update``` if you are updating an existing installation.
+to the section, along with other packages you require.
+Also add the following to ```repositories``` section of your composer.json file
+(if none create it and paste the following inside):
+```json
+"repositories": [
+    {
+        "type": "vcs",
+        "url": "https://github.com/PatchRanger/SwiftmailerEventsBundle"
+    }
+]
+```
+Now run ```composer.phar install``` if this is a new installation, or ```composer.phar update``` if you are updating an existing installation.
 
 2) Add SwiftmailerEventsBundle to your application kernel:
 
@@ -46,11 +57,14 @@ When a new message is created via ```$container->get('mailer')->createMessage();
 This class has a key-value store added to it which allows for any data to be attached to a message.  An example of this would be the SMTP connection settings.
 
 The following methods are added:
-* getAdditionalDataAll() - Returns an array of all additional data that was added.
-* getAdditionalData($key) - Retuns the value stored in additional data with a name of $key.  Returns NULL if the $key does not exist.
-* setAdditionalData($key, $value) - Sets (or overwrites) the value stored for $key with $value.
-* hasAdditionalData($key) - Returns TRUE or FALSE depending on if the data exists.
-* removeAdditionalData($key) - Unsets the value in $key.
+* addMetadata($email, array $metadata) - Overwrites the values stored for email.
+* setMetadata($email, $key, $value) - Sets (or overwrites) the value stored for $key with $value.
+* hasMetadata($email) - Returns TRUE or FALSE depending on if the data exists.
+* hasMetadata($email, $key) - Returns TRUE or FALSE depending on if the data exists.
+* getMetadata() - Returns an array of all metadata for that was added.
+* getMetadata($email) - Returns an array of all metadata that was added for a email .
+* getMetadata($email, $key) - Retuns the value stored in additional data with a name of $key.  Returns NULL if the $key does not exist.
+* clearMetadata($email = null) - Unsets the data for email.
 
 ### Events ###
 
@@ -74,56 +88,75 @@ namespace Namespace\Bundle\Listener;
 
 use TDM\SwiftMailerEventBundle\Events\MailerSendEvent;
 use TDM\SwiftMailerEventBundle\Events\TransportSendEvent;
-use TDM\SwiftMailerEventBundle\Model\Message;
+use TDM\SwiftMailerEventBundle\Model\MessageMetadataInterface;
 use TDM\SwiftMailerEventBundle\Model\SmtpTransport;
 
 class EmailSendListener {
 
-    private $storedValues = array();
+    private $metadata = array();
 
-    public function mailerSend(MailerSendEvent $event) {
+    public function onEmailMailerPreSendProcess(MailerSendEvent $event) {
+        /** @var MessageMetadataInterface $message */
         $message = $event->getMessage();
-        if (!$message instanceof Message)
+        if (!$message instanceof MessageMetadataInterface) {
             return;
+        }
 
-        $message->setAdditionalData('AuthMode', $connectionSettings['AuthMode']);
-        $message->setAdditionalData('Encryption', $connectionSettings['Encryption']);
-        $message->setAdditionalData('Host', $connectionSettings['Host']);
-        $message->setAdditionalData('Password', $connectionSettings['Password']);
-        $message->setAdditionalData('Port', $connectionSettings['Port']);
-        $message->setAdditionalData('UserName', $connectionSettings['UserName']);
-
-        $message->setFrom(array(
-            $connectionSettings['FromAddress'] => $connectionSettings['FromName'],
-        ));
+        // Get sender email and match SMTP credentials.
+        $from = $message->getFrom();
+        $from = is_array($from) ? key($from) : $from;
+        switch ($from) {
+            case 'info@example.com':
+            default:
+                $message->setMetadata($to, 'AuthMode', 'login');
+                $message->setMetadata($to, 'Encryption', 'ssl');
+                $message->setMetadata($to, 'Host', 'smtp.example.com');
+                $message->setMetadata($to, 'Password', 'secretPassword');
+                $message->setMetadata($to, 'Port', 465);
+                $message->setMetadata($to, 'UserName', 'info@example.com');
+                $message->setFrom(array(
+                    'info@example.com' => 'Example',
+                ));
+                break;
+        }
     }
 
-    public function mailerSendCleanup(MailerSendEvent $event) {
+    public function onEmailMailerPreSendCleanup(MailerSendEvent $event) {
+        /** @var MessageMetadataInterface $message */
         $message = $event->getMessage();
-        if (!$message instanceof Message)
+        if (!$message instanceof MessageMetadataInterface) {
             return;
-
-        //remove any data you don't want to be serialized here.  For our purposes, we don't need to remove anything now.
+        }
+        // Remove any data you don't want to be serialized here.
+        // For our purposes, we don't need to remove anything now.
     }
 
-    public function transportSendPre(TransportSendEvent $event) {
+    public function onEmailTransportPreSendProcess(TransportSendEvent $event) {
+        /** @var MessageMetadataInterface $message */
         $message = $event->getMessage();
-        if (!$message instanceof Message)
+        if (!$message instanceof MessageMetadataInterface) {
             return;
+        }
 
         $transport = $event->getTransport();
-        if (!$transport instanceof SmtpTransport)
+        if (!$transport instanceof SmtpTransport) {
             return;
+        }
 
-        //make sure all settings are added to message.
-        foreach (array('AuthMode', 'Encryption', 'Host', 'Password', 'Port', 'UserName') as $settingName)
-            if (!$message->hasAdditionalData($settingName))
+        $to = $message->getTo();
+        $to = is_array($to) ? key($to) : $to;
+        // Make sure all settings are added to message.
+        $metadata = $message->getMetadata();
+        foreach (array('AuthMode', 'Encryption', 'Host', 'Password', 'Port', 'UserName') as $settingName) {
+            if (empty($metadata[$to][$settingName])) {
                 return;
+            }
+        }
 
-        //clear the stored values
+        // Clear the stored values.
         $this->storedValues = array();
 
-        //make a copy of the existing values
+        // Make a copy of the existing values.
         $this->storedValues['AuthMode'] = $transport->getAuthMode();
         $this->storedValues['Encryption'] = $transport->getEncryption();
         $this->storedValues['Host'] = $transport->getHost();
@@ -131,30 +164,34 @@ class EmailSendListener {
         $this->storedValues['Port'] = $transport->getPort();
         $this->storedValues['UserName'] = $transport->getUsername();
 
-        //change the values to the settings
-        $transport->setAuthMode($message->getAdditionalData('AuthMode'));
-        $transport->setEncryption($message->getAdditionalData('Encryption'));
-        $transport->setHost($message->getAdditionalData('Host'));
-        $transport->setPassword($message->getAdditionalData('Password'));
-        $transport->setPort($message->getAdditionalData('Port'));
-        $transport->setUsername($message->getAdditionalData('UserName'));
+        // Change the values to the settings.
+        $transport->setAuthMode($metadata[$to]['AuthMode']);
+        $transport->setEncryption($metadata[$to]['Encryption']);
+        $transport->setHost($metadata[$to]['Host']);
+        $transport->setPassword($metadata[$to]['Password']);
+        $transport->setPort($metadata[$to]['Port']);
+        $transport->setUsername($metadata[$to]['UserName']);
 
-        //stop and start the transport so it uses the new values and connects to new server
+        // Restart (stop and start) the transport so it uses the new values
+        // and connects to new server
         $transport->stop();
         $transport->start();
     }
 
-    public function transportSendPost(TransportSendEvent $event) {
+    public function onEmailTransportPreSendCleanup(TransportSendEvent $event) {
         $transport = $event->getTransport();
-        if (!$transport instanceof SmtpTransport)
+        if (!$transport instanceof SmtpTransport) {
             return;
+        }
 
-        //make sure all settings are available.
-        foreach (array('AuthMode', 'Encryption', 'Host', 'Password', 'Port', 'UserName') as $settingName)
-            if (!array_key_exists($settingName, $this->storedValues))
+        // Make sure all settings are available.
+        foreach (array('AuthMode', 'Encryption', 'Host', 'Password', 'Port', 'UserName') as $settingName) {
+            if (!array_key_exists($settingName, $this->storedValues)) {
                 return;
+            }
+        }
 
-        //reset the transport values
+        // Reset the transport values.
         $transport->setAuthMode($this->storedValues['AuthMode']);
         $transport->setEncryption($this->storedValues['Encryption']);
         $transport->setHost($this->storedValues['Host']);
@@ -162,7 +199,8 @@ class EmailSendListener {
         $transport->setPort($this->storedValues['Port']);
         $transport->setUsername($this->storedValues['UserName']);
 
-        //stop and start the transport so it uses the new values and connects to new server
+        // Restarttop (stop and start) the transport so it uses the new values
+        // and connects to new server
         $transport->stop();
         $transport->start();
     }
@@ -181,10 +219,10 @@ services:
   email_send_listener:
     class: Namespace\Bundle\Listener\EmailSendListener
     tags:
-      - { name: kernel.event_listener, event: tdm.swiftmailer.mailer.pre_send_process, method: mailerSend }
-      - { name: kernel.event_listener, event: tdm.swiftmailer.mailer.pre_send_cleanup, method: mailerSendCleanup }
-      - { name: kernel.event_listener, event: tdm.swiftmailer.transport.pre_send_process, method: transportSendPre }
-      - { name: kernel.event_listener, event: tdm.swiftmailer.transport.post_send_cleanup, method: transportSendPost }
+      - { name: kernel.event_listener, event: tdm.swiftmailer.mailer.pre_send_process, method: onEmailMailerPreSendProcess }
+      - { name: kernel.event_listener, event: tdm.swiftmailer.mailer.pre_send_cleanup, method: onEmailMailerPreSendCleanup }
+      - { name: kernel.event_listener, event: tdm.swiftmailer.transport.pre_send_process, method: onEmailTransportPreSendProcess }
+      - { name: kernel.event_listener, event: tdm.swiftmailer.transport.post_send_cleanup, method: onEmailTransportPreSendCleanup }
 ```
 
 Now when we send a message in the code, the listener adds some additional data to the message.  When the spool if flushed later, the listener checks if the needed additional data is supplied and edits the transport object.  It also stores the original values from the trasport object so that the transport object can be returned to its original state once the single message is sent.
